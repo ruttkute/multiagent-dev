@@ -269,8 +269,18 @@ Before adding a task to forge.yml, check:
 
 ---
 
+## Next level
+
+**[→ PROMPTING-ADVANCED.md](PROMPTING-ADVANCED.md)** — context priming, chain-of-thought, self-verification, the 10 anti-patterns, stack-specific modifiers (Cloudflare Workers / Android WebView / vanilla JS / React), few-shot examples, prompt compression, and the master template.
+
+**[→ PROJECT-CONTEXT.template.md](PROJECT-CONTEXT.template.md)** — the reusability system. Fill this in once per project and every prompt in the library works without customization.
+
+---
+
 ## See also
 
+- [`PROMPTING-ADVANCED.md`](PROMPTING-ADVANCED.md) — advanced techniques
+- [`PROJECT-CONTEXT.template.md`](PROJECT-CONTEXT.template.md) — per-project reusability layer
 - [`forge.example.yml`](forge.example.yml) — full config example with annotated prompts
 - [`templates/`](templates/) — stack-specific starting tasks with pre-written prompts
 - [Claude Squad docs](https://github.com/smtg-ai/claude-squad) — parallel agent mechanics
