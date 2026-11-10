@@ -1,0 +1,58 @@
+# multiagent-dev — forge.yml example
+# Copy this to your project root as forge.yml, then edit.
+# Docs: https://github.com/ruttkute/multiagent-dev
+#
+# COMMANDS
+#   forge run  <id> [id…]   parallel agents (Claude Squad)
+#   forge auto <id>         autonomous agent (OpenHands)
+#   forge status            see what's running + open PRs
+
+project: my-project
+
+tasks:
+  # ── Parallel tasks (Claude Squad) ──────────────────────────────────────────
+  # Run multiple at once: forge run fix-scrollbar feat-dark-mode
+
+  - id: fix-scrollbar
+    prompt: >
+      The scrollbar between the sidebar and main content shows a white line.
+      Make it dark (#0d0a1a) to match the page background.
+      File: index.html — look for .shell and .main CSS rules.
+    mode: squad
+    branch: fix/scrollbar
+
+  - id: feat-dark-mode
+    prompt: >
+      Add a dark/light mode toggle button to the top nav.
+      Persist the user's choice in localStorage.
+      Use CSS variables already defined in :root.
+    mode: squad
+    branch: feat/dark-mode
+
+  - id: perf-images
+    prompt: >
+      Convert all PNG hero images in /images to WebP.
+      Update all <img> src attributes to use the new .webp files.
+      Add <picture> fallback for browsers that don't support WebP.
+    mode: squad
+    branch: perf/webp-images
+
+  # ── Autonomous tasks (OpenHands) ───────────────────────────────────────────
+  # Fire and forget: forge auto add-auth
+  # OpenHands will work independently and open a PR when done.
+
+  - id: add-auth
+    prompt: >
+      Implement JWT authentication for the /api/user endpoint in the
+      Cloudflare Worker. Validate tokens against the REVENUECAT_WEBHOOK_SECRET
+      environment variable. Return 401 on invalid tokens.
+    mode: auto
+    branch: feat/jwt-auth
+
+  - id: write-tests
+    prompt: >
+      Write unit tests for all utility functions in src/utils/.
+      Use the testing framework already configured in the project.
+      Aim for 80%+ coverage on the utility layer.
+    mode: auto
+    branch: test/utils-coverage
