@@ -169,6 +169,20 @@ multiagent-dev/
 
 ---
 
+## Prompt engineering
+
+The single biggest lever for better agent output is better prompts. A vague prompt produces vague code.
+
+**[→ Read the full prompt engineering guide](PROMPTING.md)**
+
+It covers: the five elements every prompt needs, templates for bugs/features/refactors, how to write for parallel vs autonomous mode, and before/after examples.
+
+**[→ Browse the prompts library](prompts/)**
+
+Ready-to-use snippets for: dark mode, JWT auth, mobile layout fixes, onboarding flows, image optimization, unit tests, refactors, and more. Copy, fill in the brackets, run.
+
+---
+
 ## Contributing
 
 PRs welcome. If you add a template for a stack not covered (Next.js, Supabase, React Native, etc.), open a PR — others will find it useful.
