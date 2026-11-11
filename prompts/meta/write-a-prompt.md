@@ -1,13 +1,13 @@
 # Meta: Use an agent to write a better prompt
 
-**Mode:** squad  
+**Mode:** parallel  
 **When to use:** You know what you want but can't quite phrase it well
 
 This is a prompt *about* prompting — give it to an agent to have it write a high-quality forge.yml task prompt for you.
 
 ```yaml
 - id: write-prompt-for-task
-  mode: squad
+  mode: parallel
   branch: meta/prompt-writing
   prompt: >
     Read PROJECT-CONTEXT.md.
@@ -23,7 +23,7 @@ This is a prompt *about* prompting — give it to an agent to have it write a hi
     3. Describe the current state concretely
     4. Have a clear "Done when:" verification condition
     5. Include relevant constraints from PROMPTING-ADVANCED.md anti-patterns
-    6. Be the right mode (squad for interactive, auto for autonomous)
+    6. Be the right mode (parallel for interactive, auto for autonomous)
     7. Follow the master template from PROMPTING-ADVANCED.md
 
     Output: a complete forge.yml task block, ready to paste and run.

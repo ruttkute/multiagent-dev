@@ -1,6 +1,5 @@
 #!/bin/bash
-# multiagent-dev — forge CLI
-# Orchestrates Claude Squad (parallel) + OpenHands (autonomous)
+# forge — run AI coding agents in parallel or autonomously, one git worktree per task
 # https://github.com/ruttkute/multiagent-dev
 
 set -e
@@ -11,7 +10,10 @@ while [ -L "$SELF" ]; do
   case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
 done
 FORGE_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+FORGE_SH="$FORGE_DIR/$(basename "$SELF")"
 CONFIG_FILE="${FORGE_CONFIG:-forge.yml}"
+AGENT="${FORGE_AGENT:-claude}"
+AUTO_PERMISSION="${FORGE_AUTO_PERMISSION:-acceptEdits}"
 
 # ── Colors ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -23,38 +25,45 @@ err()     { echo -e "${RED}✗${NC} $*" >&2; }
 usage() {
   cat <<EOF
 
-  multiagent-dev — parallel & autonomous dev orchestration
+  forge — parallel & autonomous AI coding agents, one git worktree per task
 
   USAGE
     forge <command> [args]
 
   COMMANDS
-    run  <id> [id…]    Copy task prompts, open Claude Squad (press N, paste)
-    auto <id>          Copy task prompt, start OpenHands Agent Canvas
-    status             Show agent worktrees + open agent PRs
+    run  <id> [id…]    Start each task in its own worktree + tmux window (interactive)
+    auto <id> [id…]    Run each task unattended in the background; commit, push, open a PR
+    status             Show task worktrees, agent state and open PRs
+    logs <id>          Follow the log of an autonomous task
+    clean <id>         Remove a task's worktree (its branch is kept)
     init [template]    Scaffold a forge.yml for this project
-    install            Install all dependencies
+    install            Check and install dependencies
 
   TEMPLATES
     cloudflare-worker  Cloudflare Worker + wrangler deploy
     capacitor-app      HTML/JS app with Capacitor Android pipeline
     static-site        Plain HTML/CSS/JS with deploy script
 
+  SETTINGS (environment variables)
+    FORGE_AGENT             agent command (default: claude)
+    FORGE_AUTO_PERMISSION   permission mode for forge auto (default: acceptEdits)
+    FORGE_AUTO_BUDGET       max USD per autonomous task (optional)
+    FORGE_BASE              branch/commit new task branches start from (default: HEAD)
+    FORGE_CONFIG            config file (default: forge.yml)
+
   EXAMPLES
-    forge install
     forge init cloudflare-worker
-    forge run fix-scrollbar feat-login
-    forge auto add-auth-endpoint
+    forge run add-endpoint add-cors
+    forge auto add-tests
     forge status
 
 EOF
 }
 
 # ── YAML task parser ─────────────────────────────────────────────────────────
-# Returns KEY=VALUE lines for a task id
+# Prints KEY=VALUE lines for one task; multi-line prompts are flattened to one line
 get_task() {
-  local task_id="$1"
-  python3 - "$CONFIG_FILE" "$task_id" <<'PY'
+  python3 - "$CONFIG_FILE" "$1" <<'PY'
 import sys, re
 
 config_file, task_id = sys.argv[1], sys.argv[2]
@@ -75,7 +84,7 @@ while i < len(lines):
         continue
     if s.startswith('- id:'):
         if cur: tasks.append(cur)
-        cur = {'id': s[5:].strip().strip('"\''), 'mode': 'squad', 'branch': ''}
+        cur = {'id': s[5:].strip().strip('"\''), 'mode': 'parallel', 'branch': ''}
         continue
     if not cur:
         continue
@@ -84,7 +93,6 @@ while i < len(lines):
             continue
         val = s[len(key)+1:].strip()
         if val[:1] in ('>', '|'):
-            # YAML block scalar: gather the more-indented lines, flatten to one line
             base, parts = indent(line), []
             while i < len(lines) and (not lines[i].strip() or indent(lines[i]) > base):
                 if lines[i].strip(): parts.append(lines[i].strip())
@@ -107,115 +115,266 @@ sys.exit(1)
 PY
 }
 
+task_field() { get_task "$1" | grep "^$2=" | cut -d= -f2-; }
+
+# ── Repo + worktree helpers ──────────────────────────────────────────────────
+require_repo() {
+  ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$ROOT" ]; then
+    err "Run forge inside a git repository"; exit 1
+  fi
+  if ! git -C "$ROOT" rev-parse --verify -q HEAD >/dev/null; then
+    err "The repository has no commits yet — make a first commit"; exit 1
+  fi
+  if [ ! -f "$CONFIG_FILE" ] && [ -f "$ROOT/$CONFIG_FILE" ]; then
+    CONFIG_FILE="$ROOT/$CONFIG_FILE"
+  fi
+  FDIR="$ROOT/.forge"
+  mkdir -p "$FDIR/worktrees" "$FDIR/prompts" "$FDIR/logs"
+  local common exclude
+  common="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+  exclude="$common/info/exclude"
+  mkdir -p "$common/info"
+  if ! grep -qx '.forge/' "$exclude" 2>/dev/null; then
+    echo '.forge/' >> "$exclude"
+  fi
+  local name; name="$(basename "$ROOT")"
+  SESSION="forge-${name//[^A-Za-z0-9_-]/-}"
+}
+
+require_cmd() {
+  if ! command -v "$1" &>/dev/null; then
+    err "$1 not found — run: forge install"; exit 1
+  fi
+}
+
+# Sets PROMPT and BRANCH for a task id
+load_task() {
+  local id="$1"
+  if [[ ! "$id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    err "Task id '$id' may only contain letters, digits, '.', '_' and '-'"; exit 1
+  fi
+  PROMPT="$(task_field "$id" prompt)"
+  if [ -z "$PROMPT" ]; then
+    err "Task '$id' has no prompt in $CONFIG_FILE"; exit 1
+  fi
+  BRANCH="$(task_field "$id" branch)"
+  [ -z "$BRANCH" ] && BRANCH="forge/$id"
+  local current; current="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+  if [ "$BRANCH" = "$current" ]; then
+    err "Task '$id' uses branch '$BRANCH', which is checked out in your main folder — give it its own branch"; exit 1
+  fi
+  printf '%s\n' "$PROMPT" > "$FDIR/prompts/$id.txt"
+}
+
+# Creates (or reuses) the worktree for a task; prints its path
+make_worktree() {
+  local id="$1" branch="$2" wt="$FDIR/worktrees/$1"
+  if [ ! -d "$wt" ]; then
+    if git -C "$ROOT" show-ref --verify -q "refs/heads/$branch"; then
+      git -C "$ROOT" worktree add -q "$wt" "$branch" >&2
+    else
+      git -C "$ROOT" worktree add -q -b "$branch" "$wt" "${FORGE_BASE:-HEAD}" >&2
+    fi
+  fi
+  echo "$wt"
+}
+
+auto_running() {
+  local pidfile="$FDIR/logs/$1.pid"
+  [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
+}
+
+tmux_has_window() {
+  tmux has-session -t "=$SESSION" 2>/dev/null &&
+    tmux list-windows -t "=$SESSION" -F '#W' 2>/dev/null | grep -qx "$1"
+}
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 
-find_cs() {
-  command -v cs 2>/dev/null || command -v claude-squad 2>/dev/null ||
-    { [ -x "$FORGE_DIR/bin/cs" ] && echo "$FORGE_DIR/bin/cs"; } || true
-}
-
-copy_to_clipboard() {
-  if command -v pbcopy &>/dev/null; then printf '%s' "$1" | pbcopy
-  elif command -v wl-copy &>/dev/null; then printf '%s' "$1" | wl-copy
-  elif command -v xclip &>/dev/null; then printf '%s' "$1" | xclip -selection clipboard
-  else return 1
-  fi
-}
-
-task_prompt() { get_task "$1" | grep '^prompt=' | cut -d= -f2-; }
-
-# Claude Squad is a TUI with no non-interactive "new session" command:
-# sessions are created inside it with N (new session with prompt).
 cmd_run() {
   [ $# -eq 0 ] && { err "Usage: forge run <task-id> [task-id…]"; exit 1; }
-
-  CS=$(find_cs)
-  if [ -z "$CS" ]; then
-    err "Claude Squad not found — run: forge install"
-    exit 1
-  fi
-
-  local prompts_dir=".forge/prompts"
-  mkdir -p "$prompts_dir"
+  require_repo
+  require_cmd tmux
+  require_cmd "$AGENT"
 
   echo ""
-  info "Preparing ${#@} parallel agent(s)…"
-  echo ""
-
-  local n=0
   for id in "$@"; do
-    prompt=$(task_prompt "$id")
-    [ -z "$prompt" ] && { err "No task with id '$id' in $CONFIG_FILE"; exit 1; }
-    n=$((n + 1))
-    printf '%s\n' "$prompt" > "$prompts_dir/$id.txt"
-    printf "  ${CYAN}%d. %s${NC}\n  %s\n\n" "$n" "$id" "$prompt"
+    load_task "$id"
+    if tmux_has_window "$id"; then
+      warn "$id is already open in tmux session $SESSION"
+      continue
+    fi
+    local wt; wt="$(make_worktree "$id" "$BRANCH")"
+    # The agent starts with the task prompt; when it exits, a shell stays open in the worktree
+    local launch=(bash -c 'cd "$1" && "$2" "$(cat "$3")"; echo; echo "[forge] agent exited — you are in $1"; exec "${SHELL:-bash}"'
+                  forge "$wt" "$AGENT" "$FDIR/prompts/$id.txt")
+    if tmux has-session -t "=$SESSION" 2>/dev/null; then
+      tmux new-window -d -t "=$SESSION:" -n "$id" -c "$wt" "${launch[@]}"
+    else
+      tmux new-session -d -s "$SESSION" -n "$id" -c "$wt" "${launch[@]}"
+    fi
+    ok "$id → branch $BRANCH  ($wt)"
   done
 
-  if [ $# -eq 1 ] && copy_to_clipboard "$prompt"; then
-    ok "Prompt copied to clipboard"
+  echo ""
+  info "tmux session: $SESSION   (ctrl-b w: pick a task · ctrl-b n/p: next/prev · ctrl-b d: detach)"
+  if [ -n "$TMUX" ]; then
+    tmux switch-client -t "=$SESSION"
+  elif [ -t 0 ] && [ -t 1 ]; then
+    exec tmux attach -t "=$SESSION"
+  else
+    echo "  Attach with: tmux attach -t $SESSION"
   fi
-  info "Prompts saved in $prompts_dir/ (one file per task)"
-  echo ""
-  echo "  In Claude Squad, for each task above:"
-  echo "    N      new session with a prompt — paste the task's prompt, Enter"
-  echo "    ↵ / o  attach to a session · ctrl-q detach · s commit & push · D kill"
-  echo "  Each session gets its own git worktree and branch."
-  echo ""
-  read -r -p "  Press Enter to open Claude Squad… " _
-  exec "$CS"
 }
 
 cmd_auto() {
-  local id="$1"
-  [ -z "$id" ] && { err "Usage: forge auto <task-id>"; exit 1; }
-
-  prompt=$(task_prompt "$id")
-  [ -z "$prompt" ] && { err "No task with id '$id' in $CONFIG_FILE"; exit 1; }
+  [ $# -eq 0 ] && { err "Usage: forge auto <task-id> [task-id…]"; exit 1; }
+  require_repo
+  require_cmd "$AGENT"
 
   echo ""
-  info "Autonomous task: $id"
-  echo "  $prompt"
+  local base; base="$(git -C "$ROOT" rev-parse HEAD)"
+  for id in "$@"; do
+    load_task "$id"
+    if auto_running "$id"; then
+      warn "$id is already running — forge logs $id"
+      continue
+    fi
+    local wt; wt="$(make_worktree "$id" "$BRANCH")"
+    rm -f "$FDIR/logs/$id.status"
+    nohup "$FORGE_SH" _auto-run "$id" "$wt" "$BRANCH" "$FDIR" "$base" > "$FDIR/logs/$id.log" 2>&1 &
+    echo $! > "$FDIR/logs/$id.pid"
+    ok "$id running in the background → branch $BRANCH"
+  done
   echo ""
-  if copy_to_clipboard "$prompt"; then
-    ok "Prompt copied — paste it into a new conversation in Agent Canvas"
-  else
-    info "Paste the prompt above into a new conversation in Agent Canvas"
+  info "Follow a task: forge logs <id>   ·   Overview: forge status"
+  echo "  Permission mode: $AUTO_PERMISSION (set FORGE_AUTO_PERMISSION to change)"
+}
+
+# Internal: the background job behind forge auto
+cmd_auto_run() {
+  local id="$1" wt="$2" branch="$3" fdir="$4" base="$5"
+  local status="$fdir/logs/$id.status"
+  set +e
+  cd "$wt" || { echo "failed: worktree missing" > "$status"; exit 1; }
+
+  echo "[forge] $(date '+%Y-%m-%d %H:%M:%S') start $id on $branch"
+  local args=(-p "$(cat "$fdir/prompts/$id.txt")" --permission-mode "$AUTO_PERMISSION")
+  [ -n "$FORGE_AUTO_BUDGET" ] && args+=(--max-budget-usd "$FORGE_AUTO_BUDGET")
+  "$AGENT" "${args[@]}"
+  local rc=$?
+  echo ""
+  if [ $rc -ne 0 ]; then
+    echo "[forge] agent exited with code $rc"
+    echo "failed: agent exit $rc" > "$status"; exit $rc
   fi
-  echo ""
 
-  if command -v agent-canvas &>/dev/null; then
-    exec agent-canvas
-  elif [ -d "$FORGE_DIR/openhands/node_modules" ]; then
-    info "Starting Agent Canvas from the bundled source (openhands/)…"
-    cd "$FORGE_DIR/openhands" && exec npm run dev
-  else
-    err "OpenHands Agent Canvas not installed — run: forge install"
-    exit 1
+  if [ -n "$(git status --porcelain)" ]; then
+    git add -A && git commit -q -m "forge: $id" && echo "[forge] committed changes"
   fi
+  if [ "$(git rev-list --count "$base"..HEAD)" = "0" ]; then
+    echo "[forge] no changes made"
+    echo "done: no changes" > "$status"; exit 0
+  fi
+
+  local remote; remote="$(git remote | head -1)"
+  if [ -z "$remote" ]; then
+    echo "done: committed on $branch (no remote)" > "$status"; exit 0
+  fi
+  if ! git push -q -u "$remote" "$branch"; then
+    echo "failed: push to $remote" > "$status"; exit 1
+  fi
+  echo "[forge] pushed $branch to $remote"
+
+  if command -v gh &>/dev/null; then
+    local pr url
+    pr="$(gh pr create --head "$branch" --title "forge: $id" --body-file "$fdir/prompts/$id.txt" 2>&1)"
+    echo "[forge] $pr"
+    url="$(echo "$pr" | grep -Eo 'https://[^ ]+' | tail -1)"
+    if [ -n "$url" ]; then
+      echo "done: $url" > "$status"
+    else
+      echo "done: pushed $branch, PR not created (see forge logs $id)" > "$status"
+    fi
+  else
+    echo "done: pushed $branch (install gh for automatic PRs)" > "$status"
+  fi
+  echo "[forge] $(date '+%Y-%m-%d %H:%M:%S') finished"
 }
 
 cmd_status() {
+  require_repo
   echo ""
-  info "Agent worktrees (Claude Squad sessions)"
-  if git rev-parse --git-dir &>/dev/null; then
-    git worktree list
-  else
-    warn "Not inside a git repository"
+  info "Tasks"
+  local found=0 d id branch changes state
+  for d in "$FDIR/worktrees"/*/; do
+    if [ ! -d "$d" ]; then continue; fi
+    found=1
+    id="$(basename "$d")"
+    branch="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    changes="$(git -C "$d" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+    if auto_running "$id"; then
+      state="auto: running"
+    elif [ -f "$FDIR/logs/$id.status" ]; then
+      state="auto: $(cat "$FDIR/logs/$id.status")"
+    elif command -v tmux &>/dev/null && tmux_has_window "$id"; then
+      state="open in tmux ($SESSION)"
+    else
+      state="idle"
+    fi
+    printf "  ${CYAN}%-22s${NC} %-28s %3s uncommitted  %s\n" "$id" "$branch" "$changes" "$state"
+  done
+  if [ $found -eq 0 ]; then
+    echo "  (no tasks yet — forge run <id> or forge auto <id>)"
   fi
 
   echo ""
-  info "Open agent PRs"
+  info "Your open PRs"
   if command -v gh &>/dev/null; then
-    gh pr list --search "head:agent/" 2>/dev/null || echo "  (none found)"
+    gh pr list --author "@me" 2>/dev/null || echo "  (could not reach GitHub)"
   else
     warn "GitHub CLI not installed (brew install gh)"
   fi
   echo ""
 }
 
+cmd_logs() {
+  [ -z "$1" ] && { err "Usage: forge logs <task-id>"; exit 1; }
+  require_repo
+  local log="$FDIR/logs/$1.log"
+  if [ ! -f "$log" ]; then
+    err "No log for '$1' — it runs with: forge auto $1"; exit 1
+  fi
+  if auto_running "$1"; then
+    exec tail -n 50 -f "$log"
+  else
+    cat "$log"
+  fi
+}
+
+cmd_clean() {
+  [ -z "$1" ] && { err "Usage: forge clean <task-id>"; exit 1; }
+  require_repo
+  local id="$1" wt="$FDIR/worktrees/$1"
+  if [ ! -d "$wt" ]; then
+    err "No worktree for '$id'"; exit 1
+  fi
+  if auto_running "$id"; then
+    err "$id is still running — wait for it to finish (forge logs $id)"; exit 1
+  fi
+  if command -v tmux &>/dev/null && tmux_has_window "$id"; then
+    err "$id is open in tmux — exit the agent and close its window first"; exit 1
+  fi
+  if ! git -C "$ROOT" worktree remove "$wt"; then
+    err "Worktree has uncommitted changes — commit or discard them in $wt first"; exit 1
+  fi
+  rm -f "$FDIR/logs/$id.pid" "$FDIR/logs/$id.status"
+  ok "Removed worktree for $id (branch kept: git branch -D <branch> to delete it)"
+}
+
 cmd_init() {
   local template="${1:-}"
-  local src=""
 
   if [ -f "forge.yml" ]; then
     err "forge.yml already exists. Delete it first to reinitialize."
@@ -223,31 +382,30 @@ cmd_init() {
   fi
 
   if [ -n "$template" ] && [ -f "$FORGE_DIR/templates/$template/forge.yml" ]; then
-    src="$FORGE_DIR/templates/$template/forge.yml"
-    cp "$src" forge.yml
+    cp "$FORGE_DIR/templates/$template/forge.yml" forge.yml
     ok "Created forge.yml from template: $template"
   else
     if [ -n "$template" ]; then
       warn "Template '$template' not found — using generic"
     fi
     cat > forge.yml <<YAML
-# multiagent-dev config — $(basename "$(pwd)")
+# forge config — $(basename "$(pwd)")
 # Docs: https://github.com/ruttkute/multiagent-dev
 
 project: $(basename "$(pwd)")
 
 tasks:
-  # Run in parallel with Claude Squad:   forge run <id> [id…]
-  # Run autonomously with OpenHands:     forge auto <id>
+  # Interactive, in parallel:   forge run <id> [id…]
+  # Unattended, opens a PR:     forge auto <id> [id…]
 
   - id: example-feature
     prompt: "Describe what you want this agent to build or fix"
-    mode: squad
+    mode: parallel
     branch: feat/example
 
   # - id: fix-bug
   #   prompt: "Fix the login screen crash on Android 13"
-  #   mode: squad
+  #   mode: parallel
   #   branch: fix/login-crash
 
   # - id: autonomous-task
@@ -266,74 +424,58 @@ YAML
 
 cmd_install() {
   echo ""
-  info "Installing multiagent-dev dependencies"
+  info "Checking forge dependencies"
   echo ""
+  local missing=0
 
-  # Claude Squad — built from the bundled source in claude-squad/
-  if [ -n "$(find_cs)" ]; then
-    ok "Claude Squad already installed"
-  elif command -v go &>/dev/null; then
-    info "Building Claude Squad from claude-squad/…"
-    mkdir -p "$FORGE_DIR/bin"
-    (cd "$FORGE_DIR/claude-squad" && go build -o "$FORGE_DIR/bin/cs" .) && ok "Claude Squad built → $FORGE_DIR/bin/cs"
-    [ -w /usr/local/bin ] && ln -sf "$FORGE_DIR/bin/cs" /usr/local/bin/cs && ok "cs linked → /usr/local/bin/cs"
+  for tool in git python3; do
+    if command -v "$tool" &>/dev/null; then ok "$tool"; else err "$tool is required"; missing=1; fi
+  done
+
+  if command -v "$AGENT" &>/dev/null; then
+    ok "$AGENT (agent)"
   else
-    warn "Go 1.23+ is needed to build Claude Squad from claude-squad/"
-    command -v brew &>/dev/null && echo "  Install Go: brew install go   then re-run: forge install"
-  fi
-
-  echo ""
-
-  # OpenHands Agent Canvas — installed from the bundled source in openhands/
-  local node_major
-  node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
-  if command -v agent-canvas &>/dev/null || [ -d "$FORGE_DIR/openhands/node_modules" ]; then
-    ok "OpenHands Agent Canvas already installed"
-  elif [ "$node_major" -ge 24 ] && command -v uv &>/dev/null; then
-    info "Installing OpenHands Agent Canvas from openhands/…"
-    (cd "$FORGE_DIR/openhands" && npm install) && ok "Agent Canvas installed (start it with: forge auto <id>)"
-  else
-    warn "OpenHands Agent Canvas needs Node.js 24+ and uv"
-    echo "  Node: https://nodejs.org   uv: https://docs.astral.sh/uv/"
-    echo "  Then re-run: forge install"
-  fi
-
-  echo ""
-
-  # GitHub CLI
-  if command -v gh &>/dev/null; then
-    ok "GitHub CLI already installed"
-  else
-    info "Installing GitHub CLI…"
-    if command -v brew &>/dev/null; then
-      brew install gh && gh auth login && ok "GitHub CLI installed"
-    else
-      echo "  Install from: https://cli.github.com"
+    warn "$AGENT not found"
+    if [ "$AGENT" = "claude" ]; then
+      echo "  Install Claude Code: npm install -g @anthropic-ai/claude-code"
     fi
+    missing=1
   fi
 
-  echo ""
+  for tool in tmux gh; do
+    if command -v "$tool" &>/dev/null; then
+      ok "$tool"
+    elif command -v brew &>/dev/null; then
+      info "Installing $tool…"
+      if brew install "$tool"; then ok "$tool installed"; else missing=1; fi
+      if [ "$tool" = "gh" ] && command -v gh &>/dev/null; then
+        echo "  Sign in to GitHub: gh auth login"
+      fi
+    else
+      warn "$tool not found — install it with your package manager"
+      missing=1
+    fi
+  done
 
-  # tmux (required by Claude Squad)
-  if command -v tmux &>/dev/null; then
-    ok "tmux already installed"
+  echo ""
+  if [ $missing -eq 0 ]; then
+    ok "Ready. Next: forge init [template]"
   else
-    info "Installing tmux (required by Claude Squad)…"
-    command -v brew &>/dev/null && brew install tmux && ok "tmux installed"
+    warn "Install the missing tools above, then re-run: forge install"
   fi
-
-  echo ""
-  ok "Done! Run: forge init [template]"
   echo ""
 }
 
 # ── Router ───────────────────────────────────────────────────────────────────
 case "${1:-}" in
-  run)     shift; cmd_run "$@" ;;
-  auto)    shift; cmd_auto "$@" ;;
-  status)  cmd_status ;;
-  init)    shift; cmd_init "$@" ;;
-  install) cmd_install ;;
+  run)       shift; cmd_run "$@" ;;
+  auto)      shift; cmd_auto "$@" ;;
+  _auto-run) shift; cmd_auto_run "$@" ;;
+  status)    cmd_status ;;
+  logs)      shift; cmd_logs "$@" ;;
+  clean)     shift; cmd_clean "$@" ;;
+  init)      shift; cmd_init "$@" ;;
+  install)   cmd_install ;;
   help|--help|-h|"") usage ;;
   *) err "Unknown command: $1"; usage; exit 1 ;;
 esac

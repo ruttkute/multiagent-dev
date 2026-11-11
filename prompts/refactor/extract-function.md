@@ -1,11 +1,11 @@
 # Refactor: Extract duplicated logic into a shared function
 
-**Mode:** squad  
+**Mode:** parallel  
 **When to use:** The same code block appears in 3+ places; time to centralize it
 
 ```yaml
 - id: extract-shared-logic
-  mode: squad
+  mode: parallel
   branch: refactor/extract-[name]
   prompt: >
     Refactor [FILE] to extract the duplicated [DESCRIBE LOGIC] into a shared helper.

@@ -2,59 +2,65 @@
 
 > Run multiple AI coding agents in parallel or autonomously — across any project.
 
-One repo, two complete agent tools inside it:
+`forge` gives every task its own git worktree and branch, then either:
 
-- **[`claude-squad/`](claude-squad/)**: the full source of [Claude Squad](https://github.com/smtg-ai/claude-squad). It runs many Claude Code (or Codex, Gemini, Aider) sessions side by side, each in its own git worktree.
-- **[`openhands/`](openhands/)**: the full source of [OpenHands](https://github.com/OpenHands/OpenHands) Agent Canvas. It is a self-hosted control center where agents work on their own, locally, in Docker or on a server.
+- **opens it as an interactive agent session** in its own tmux window, so you can run many side by side and steer each one, or
+- **runs it unattended** in the background, then commits, pushes and opens a pull request for you to review.
 
-The `forge` CLI ties them together around one YAML task file and builds both tools from the source in this repo. You don't need anything from Homebrew or npm.
+Tasks live in one `forge.yml` per project. The agent is [Claude Code](https://claude.ai/code) by default; set `FORGE_AGENT` to use another CLI agent.
 
 ---
 
 ## Why
 
-Solo devs and small teams hit a ceiling on how fast they can ship. This repo lets you:
+Solo devs and small teams hit a ceiling on how fast they can ship. forge lets you:
 
-- **Run 5–10 tasks simultaneously.** Each agent works in its own git worktree and branch, so nothing collides.
-- **Hand off autonomous tasks.** Give Agent Canvas a task and it plans, codes and tests on its own.
-- **Define your work in one YAML file.** Use the same config across all your projects.
-- **Own the code.** Both tools live in this repo; read them, patch them, build them yourself.
+- **Run 5–10 tasks at once.** Each task gets its own worktree and branch, so agents never touch each other's files.
+- **Hand off well-defined work.** `forge auto` runs a task with no supervision and opens a PR when done.
+- **Define your work once.** One YAML file per project, with the same commands everywhere.
+- **Drop it into any project.** Cloudflare Workers, Capacitor apps, plain HTML sites, anything in git.
 
 ---
 
 ## How it works
 
 ```
-forge.yml               ← define tasks once
+forge.yml                 ← define tasks once
     ↓
-forge run task-a task-b ← prints + saves the prompts, opens Claude Squad
-                          (press N per task, paste the prompt → parallel sessions)
-forge auto task-c       ← copies the prompt, starts Agent Canvas (paste it into a new conversation)
-forge status            ← agent worktrees + open PRs
+forge run task-a task-b   ← each task: new worktree + branch + tmux window,
+                            agent already started with the task's prompt
+forge auto task-c         ← runs in the background → commit → push → PR
+forge status              ← every task's branch, uncommitted changes, state + your open PRs
 ```
 
-**Claude Squad** is the parallel mode. You watch the agents work and can interrupt, steer or approve.
-**Agent Canvas (OpenHands)** is the autonomous mode. The agent works through the task on its own; you review the result.
-
-> Claude Squad is a terminal UI. It has no command for creating a session from a script, so `forge run` gets the prompts ready and you start each session with `N`.
+```
+your-project/
+├── forge.yml
+└── .forge/                       ← created by forge, never committed
+    ├── worktrees/task-a/         ← branch feat/task-a, agent 1 works here
+    ├── worktrees/task-b/         ← branch feat/task-b, agent 2 works here
+    ├── worktrees/task-c/         ← branch feat/task-c, unattended agent
+    ├── prompts/                  ← each task's prompt
+    └── logs/                     ← logs + results of forge auto
+```
 
 ---
 
 ## Quick start
 
 ```bash
-# 1 — Install (clones this repo to ~/.multiagent-dev and builds both tools)
+# 1 — Install (clones to ~/.multiagent-dev and links the forge command)
 curl -fsSL https://raw.githubusercontent.com/ruttkute/multiagent-dev/main/install.sh | bash
 
-# 2 — Go to your project
+# 2 — Go to your project (must be a git repo with at least one commit)
 cd my-project
 
 # 3 — Scaffold a config (choose your stack)
 forge init cloudflare-worker   # or: capacitor-app, static-site
 
-# 4 — Edit forge.yml to describe your tasks, then:
-forge run task-a task-b        # parallel (Claude Squad)
-forge auto task-c              # autonomous (Agent Canvas)
+# 4 — Edit forge.yml, then:
+forge run task-a task-b        # interactive, in parallel
+forge auto task-c              # unattended, opens a PR
 ```
 
 ---
@@ -69,14 +75,14 @@ tasks:
     prompt: >
       Fix the crash on the login screen when the user submits without a password.
       File: src/screens/Login.js — check the submit handler validation.
-    mode: squad       # squad = Claude Squad (parallel), auto = Agent Canvas (autonomous)
+    mode: parallel    # parallel = forge run (interactive), auto = forge auto (unattended)
     branch: fix/login-bug
 
   - id: add-dark-mode
     prompt: >
       Add dark/light mode toggle to the app header.
       Use CSS variables on :root. Persist choice in localStorage.
-    mode: squad
+    mode: parallel
     branch: feat/dark-mode
 
   - id: build-auth-api
@@ -88,7 +94,9 @@ tasks:
     branch: feat/auth-api
 ```
 
-`branch` is a label for your own tracking. Claude Squad names each session's branch itself, using the `branch_prefix` in `~/.claude-squad/config.json`.
+- **`id`**: letters, digits, `.`, `_` and `-`. It is also the worktree and tmux window name.
+- **`branch`**: optional; defaults to `forge/<id>`. An existing branch is reused; otherwise it's created from your current commit (or `FORGE_BASE`). It can't be the branch checked out in your main folder.
+- **`mode`**: a reminder of how the task is meant to run. You choose with `forge run` or `forge auto`.
 
 ---
 
@@ -96,23 +104,35 @@ tasks:
 
 | Command | What it does |
 |---|---|
-| `forge install` | Build Claude Squad from `claude-squad/`, install Agent Canvas from `openhands/`, check GitHub CLI + tmux |
-| `forge init [template]` | Scaffold a `forge.yml` for your project |
-| `forge run <id> [id…]` | Print the task prompts, save them to `.forge/prompts/`, open Claude Squad |
-| `forge auto <id>` | Copy the task prompt to the clipboard and start Agent Canvas |
-| `forge status` | Show agent git worktrees and open agent PRs |
+| `forge run <id> [id…]` | Creates each task's worktree and opens a tmux window there with the agent started on the prompt, then attaches |
+| `forge auto <id> [id…]` | Runs each task unattended in the background; on success commits, pushes and opens a PR (with `gh`) |
+| `forge status` | Every task's branch, uncommitted changes and state (open in tmux / running / done + PR link / failed), plus your open PRs |
+| `forge logs <id>` | Follows the log of an autonomous task |
+| `forge clean <id>` | Removes a finished task's worktree (refuses if it has uncommitted changes; the branch is kept) |
+| `forge init [template]` | Scaffolds a `forge.yml` |
+| `forge install` | Checks dependencies and installs tmux and gh with Homebrew if missing |
 
-### Inside Claude Squad
+### Inside the tmux session
 
-| Key | Action |
+| Keys | Action |
 |---|---|
-| `N` | New session with a prompt (paste a task's prompt) |
-| `n` | New session without a prompt |
-| `↵` / `o` | Attach to the selected session · `ctrl-q` to detach |
-| `s` | Commit and push the session's branch |
-| `c` / `r` | Checkout (pause) / resume a session |
-| `D` | Kill the selected session |
-| `tab` | Switch between preview and diff |
+| `ctrl-b w` | Pick a task window from a list |
+| `ctrl-b n` / `ctrl-b p` | Next / previous task |
+| `ctrl-b d` | Detach (agents keep running); come back with `tmux attach -t forge-<project>` |
+
+When the agent exits, the window drops to a shell inside that task's worktree, so you can test, commit and push by hand.
+
+---
+
+## Settings
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FORGE_AGENT` | `claude` | Agent command. `forge run` calls `<agent> "<prompt>"`; `forge auto` calls `<agent> -p "<prompt>" --permission-mode <mode>` |
+| `FORGE_AUTO_PERMISSION` | `acceptEdits` | Permission mode for `forge auto`. `acceptEdits` lets the agent edit files but not run arbitrary commands. Only use `bypassPermissions` in a sandbox |
+| `FORGE_AUTO_BUDGET` | (none) | Maximum USD an autonomous task may spend |
+| `FORGE_BASE` | `HEAD` | Branch or commit that new task branches start from |
+| `FORGE_CONFIG` | `forge.yml` | Config file path |
 
 ---
 
@@ -132,43 +152,15 @@ Each template includes real, useful task prompts you can run immediately.
 
 ## Requirements
 
-| Tool | Used for | How it's installed |
+| Tool | Used for | Install |
 |---|---|---|
-| Go 1.23+ | Building Claude Squad from `claude-squad/` | `brew install go` |
-| Node.js 24+ and [uv](https://docs.astral.sh/uv/) | Running Agent Canvas from `openhands/` | nodejs.org, `brew install uv` |
-| [Claude Code](https://claude.ai/code) | The default agent inside Claude Squad | Needs an Anthropic account |
-| tmux | Session management for Claude Squad | `brew install tmux` |
-| [GitHub CLI](https://cli.github.com) | PR status | `brew install gh` |
+| git | Worktrees and branches | Usually pre-installed |
+| [Claude Code](https://claude.ai/code) | The default agent | `npm install -g @anthropic-ai/claude-code` |
+| tmux 3.0+ | One window per parallel task | `brew install tmux` |
+| [GitHub CLI](https://cli.github.com) | PRs from `forge auto`, PR list in `forge status` | `brew install gh`, then `gh auth login` |
 | Python 3 | forge.yml parser | Usually pre-installed |
 
-> `forge install` builds and installs everything it can, and tells you what's missing.
-
----
-
-## How agents stay isolated
-
-Each Claude Squad session gets its own **git worktree**: a separate working copy of your repo on its own branch. Agents can't step on each other's files. Press `s` in Claude Squad to commit and push a session's branch, then open a PR and merge.
-
-```
-main
-├── <prefix>/fix-login-bug    ← session 1
-├── <prefix>/dark-mode        ← session 2
-└── <prefix>/auth-api         ← session 3
-```
-
----
-
-## Updating the bundled tools
-
-Both folders are snapshots of upstream. [`UPSTREAM.md`](UPSTREAM.md) records the exact commits. To pull the latest:
-
-```bash
-bash sync-upstream.sh          # both
-bash sync-upstream.sh openhands
-git diff --cached --stat       # review, then commit
-```
-
-Syncing replaces each folder with upstream's version, so any local patches inside `claude-squad/` or `openhands/` must be re-applied.
+> `forge install` checks all of these and installs what it can.
 
 ---
 
@@ -179,9 +171,11 @@ Syncing replaces each folder with upstream's version, so any local patches insid
 - What the current behavior is vs what you want
 - Any patterns to follow from existing code
 
-**Use `mode: squad` for things you want to steer.** Claude Squad is interactive: you can watch, adjust and redirect agents mid-task.
+**Use `forge run` for things you want to steer.** You can watch, adjust and redirect each agent mid-task.
 
-**Use `mode: auto` for well-defined tasks.** Autonomous agents work best when the task has a clear definition of done (a test that should pass, a spec to meet, a bug to reproduce and fix).
+**Use `forge auto` for well-defined tasks.** Unattended agents work best when the task has a clear definition of done (a test that should pass, a spec to meet, a bug to reproduce and fix).
+
+**Keep parallel tasks on separate files.** Each agent has its own branch, but two branches that edit the same lines will conflict when you merge them.
 
 ---
 
@@ -189,17 +183,14 @@ Syncing replaces each folder with upstream's version, so any local patches insid
 
 ```
 multiagent-dev/
-├── forge.sh                   ← forge CLI
+├── forge.sh                   ← the forge CLI
 ├── install.sh                 ← one-shot installer
-├── sync-upstream.sh           ← refresh claude-squad/ and openhands/ from upstream
-├── UPSTREAM.md                ← upstream sources, commits, licenses
 ├── forge.example.yml          ← full example config
-├── claude-squad/              ← Claude Squad source (Go, AGPL-3.0)
-├── openhands/                 ← OpenHands Agent Canvas source (TypeScript, MIT)
 ├── templates/                 ← forge.yml starters per stack
 ├── prompts/                   ← ready-to-use prompt library
 ├── PROMPTING.md               ← prompt engineering guide
-└── PROMPTING-ADVANCED.md      ← advanced techniques
+├── PROMPTING-ADVANCED.md      ← advanced techniques
+└── PROJECT-CONTEXT.template.md
 ```
 
 ---
@@ -224,8 +215,4 @@ PRs welcome. If you add a template for a stack not covered (Next.js, Supabase, R
 
 ---
 
-## Credits and licenses
-
-- [Claude Squad](https://github.com/smtg-ai/claude-squad) by smtg-ai: `claude-squad/`, AGPL-3.0
-- [OpenHands](https://github.com/OpenHands/OpenHands) by the OpenHands contributors: `openhands/`, MIT
-- Everything else in this repo: MIT. See [LICENSE](LICENSE) and [UPSTREAM.md](UPSTREAM.md).
+MIT License © ruttkute — see [LICENSE](LICENSE).

@@ -1,0 +1,45 @@
+# multiagent-dev — Static HTML/CSS/JS site template
+# No framework — plain files deployed via deploy.sh or Cloudflare Pages
+
+project: my-static-site
+
+tasks:
+  - id: fix-mobile-layout
+    prompt: >
+      Fix the mobile layout (< 768px) on index.html.
+      The nav overlaps the hero section and the grid breaks to 1 column badly.
+      Use existing CSS breakpoints, do not add a framework.
+    mode: parallel
+    branch: fix/mobile-layout
+
+  - id: add-dark-mode
+    prompt: >
+      Add dark/light mode to the site. Define CSS variables on :root for colors.
+      Add a toggle button to the header. Persist choice in localStorage.
+      Make sure all existing color values switch correctly.
+    mode: parallel
+    branch: feat/dark-mode
+
+  - id: perf-images
+    prompt: >
+      Convert all JPG/PNG images in /images to WebP format.
+      Update all HTML files to use <picture> tags with WebP + original fallback.
+      Add loading="lazy" to all below-the-fold images.
+    mode: parallel
+    branch: perf/webp-lazy
+
+  - id: seo-meta
+    prompt: >
+      Add SEO meta tags to all HTML pages: og:title, og:description, og:image,
+      canonical URL, and Twitter card tags.
+      Add a BreadcrumbList JSON-LD schema to inner pages.
+    mode: parallel
+    branch: feat/seo-meta
+
+  - id: add-blog-section
+    prompt: >
+      Add a /blog directory with an index.html listing page and a template for
+      article pages. Match the existing site design. Include schema.org Article
+      JSON-LD, og:image, and a back-to-blog nav link on each article page.
+    mode: auto
+    branch: feat/blog

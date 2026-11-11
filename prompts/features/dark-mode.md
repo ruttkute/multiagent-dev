@@ -1,11 +1,11 @@
 # Feature: Dark / light mode toggle
 
-**Mode:** squad  
+**Mode:** parallel  
 **When to use:** Adding theme switching to any HTML/CSS project
 
 ```yaml
 - id: add-dark-mode
-  mode: squad
+  mode: parallel
   branch: feat/dark-mode
   prompt: >
     Add dark/light mode toggle to [FILE].

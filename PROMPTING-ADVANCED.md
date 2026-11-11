@@ -402,7 +402,7 @@ Over time, your forge.yml prompts become increasingly precise because they carry
 
 ## Technique 8 — Prompt compression for autonomous mode
 
-Autonomous agents (OpenHands) work best with dense, unambiguous prompts.
+Autonomous agents (forge auto) work best with dense, unambiguous prompts.
 Too much narrative slows them down and introduces interpretation noise.
 
 ### Compress with structured format
@@ -442,7 +442,7 @@ This is the highest-quality prompt structure. Use it for any task above 30 minut
 
 ```yaml
 - id: [task-id]
-  mode: [squad|auto]
+  mode: [parallel|auto]
   branch: [category/name]
   prompt: >
     Read PROJECT-CONTEXT.md.

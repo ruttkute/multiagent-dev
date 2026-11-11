@@ -1,0 +1,42 @@
+# multiagent-dev — Cloudflare Worker template
+# Project uses wrangler.toml + deploy.sh pattern
+
+project: my-worker
+
+tasks:
+  - id: add-endpoint
+    prompt: >
+      Add a new POST /api/data endpoint to the Cloudflare Worker (index.js).
+      Validate the JSON body, write to KV, and return { success: true }.
+      Follow the same pattern as existing endpoints in the file.
+    mode: parallel
+    branch: feat/data-endpoint
+
+  - id: add-cors
+    prompt: >
+      Add CORS headers to all responses in the Cloudflare Worker.
+      Allow origins from the domains listed in wrangler.toml vars.
+      Handle OPTIONS preflight requests.
+    mode: parallel
+    branch: feat/cors
+
+  - id: add-auth-middleware
+    prompt: >
+      Add JWT middleware to the Worker that validates Authorization: Bearer tokens
+      on all /api/* routes. Return 401 JSON on failure. Skip /health endpoint.
+    mode: auto
+    branch: feat/auth-middleware
+
+  - id: add-rate-limiting
+    prompt: >
+      Implement rate limiting using Cloudflare KV: max 60 requests per minute
+      per IP. Return 429 Too Many Requests when exceeded. Use KV TTL for cleanup.
+    mode: auto
+    branch: feat/rate-limit
+
+  - id: add-tests
+    prompt: >
+      Write Vitest unit tests for the Worker handlers using Miniflare.
+      Cover: happy path, 404 on unknown routes, 401 on missing auth.
+    mode: parallel
+    branch: test/worker-unit

@@ -1,11 +1,11 @@
 # Feature: Onboarding flow (mobile app)
 
-**Mode:** squad  
+**Mode:** parallel  
 **When to use:** Adding a first-launch onboarding sequence to a Capacitor/mobile app
 
 ```yaml
 - id: add-onboarding
-  mode: squad
+  mode: parallel
   branch: feat/onboarding
   prompt: >
     Add a [N]-step onboarding flow to [FILE e.g. notte_v7.html].

@@ -1,11 +1,11 @@
 # Fix: Missing or broken API error handling
 
-**Mode:** squad  
+**Mode:** parallel  
 **When to use:** API calls crash the UI, errors aren't shown to users, unhandled promise rejections
 
 ```yaml
 - id: fix-api-errors
-  mode: squad
+  mode: parallel
   branch: fix/api-error-handling
   prompt: >
     Fix error handling for the [ENDPOINT e.g. POST /api/subscribe] call in [FILE].

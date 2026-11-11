@@ -17,7 +17,7 @@ Ready-to-use prompt snippets. Copy into your `forge.yml`, fill in the `[brackets
 1. Find a prompt that matches your task
 2. Copy the `prompt:` block into your `forge.yml`
 3. Replace every `[bracket]` with your specifics
-4. Run: `forge run <task-id>`
+4. Run it: `forge run <task-id>` (`mode: parallel`) or `forge auto <task-id>` (`mode: auto`)
 
-Prompts with `mode: auto` are designed for OpenHands (autonomous).
-Prompts with `mode: squad` are designed for Claude Squad (interactive).
+Prompts with `mode: parallel` are written for interactive sessions you can steer.
+Prompts with `mode: auto` are written to run unattended: they spell out the definition of done.

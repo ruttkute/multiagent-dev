@@ -1,5 +1,4 @@
 .DS_Store
-forge.yml
+/forge.yml
 *.local
-bin/
 .forge/

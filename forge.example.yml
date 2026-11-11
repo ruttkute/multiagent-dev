@@ -3,14 +3,14 @@
 # Docs: https://github.com/ruttkute/multiagent-dev
 #
 # COMMANDS
-#   forge run  <id> [id…]   parallel agents (Claude Squad)
-#   forge auto <id>         autonomous agent (OpenHands)
+#   forge run  <id> [id…]   interactive agents in parallel, one tmux window each
+#   forge auto <id> [id…]   unattended agents; each commits, pushes and opens a PR
 #   forge status            see what's running + open PRs
 
 project: my-project
 
 tasks:
-  # ── Parallel tasks (Claude Squad) ──────────────────────────────────────────
+  # ── Parallel tasks (interactive) ────────────────────────────────────────────────
   # Run multiple at once: forge run fix-scrollbar feat-dark-mode
 
   - id: fix-scrollbar
@@ -18,7 +18,7 @@ tasks:
       The scrollbar between the sidebar and main content shows a white line.
       Make it dark (#0d0a1a) to match the page background.
       File: index.html — look for .shell and .main CSS rules.
-    mode: squad
+    mode: parallel
     branch: fix/scrollbar
 
   - id: feat-dark-mode
@@ -26,7 +26,7 @@ tasks:
       Add a dark/light mode toggle button to the top nav.
       Persist the user's choice in localStorage.
       Use CSS variables already defined in :root.
-    mode: squad
+    mode: parallel
     branch: feat/dark-mode
 
   - id: perf-images
@@ -34,12 +34,12 @@ tasks:
       Convert all PNG hero images in /images to WebP.
       Update all <img> src attributes to use the new .webp files.
       Add <picture> fallback for browsers that don't support WebP.
-    mode: squad
+    mode: parallel
     branch: perf/webp-images
 
-  # ── Autonomous tasks (OpenHands) ───────────────────────────────────────────
+  # ── Autonomous tasks (unattended) ────────────────────────────────────────────────
   # Fire and forget: forge auto add-auth
-  # Agent Canvas (OpenHands) works on it independently; you review the result.
+  # The agent works on its own branch, then forge opens a PR for you to review.
 
   - id: add-auth
     prompt: >

@@ -1,0 +1,45 @@
+# multiagent-dev — Capacitor Android app template
+# HTML/JS source compiled to Android via Capacitor
+# Build triggered by git push → GitHub Actions
+
+project: my-capacitor-app
+
+tasks:
+  - id: fix-android-layout
+    prompt: >
+      Fix the layout issue on Android WebView where X appears broken.
+      The source file is notte_v7.html (or index.html in notte-app/).
+      Test CSS changes work in both Chrome and Android WebView (avoid flexbox bugs).
+    mode: parallel
+    branch: fix/android-layout
+
+  - id: add-screen
+    prompt: >
+      Add a new screen/panel to the app. It should slide in from the right,
+      follow the existing panel pattern (_openPanel / closeAllPanels),
+      and include a back button. Add it to the navigation flow after the main view.
+    mode: parallel
+    branch: feat/new-screen
+
+  - id: dark-mode
+    prompt: >
+      Add dark/light mode toggle. Use CSS variables on :root to switch themes.
+      Persist the user's choice in localStorage. Toggle via a button in the header.
+    mode: parallel
+    branch: feat/dark-mode
+
+  - id: onboarding-flow
+    prompt: >
+      Build a 3-step onboarding flow shown on first launch (localStorage flag).
+      Each step has a background image, title, subtitle, and Next button.
+      Step 3 has a Get Started button that marks onboarding complete.
+    mode: auto
+    branch: feat/onboarding
+
+  - id: push-notifications
+    prompt: >
+      Integrate Capacitor PushNotifications plugin.
+      Request permission on first launch, save the FCM token to the backend.
+      Handle foreground and background notification display.
+    mode: auto
+    branch: feat/push-notifications

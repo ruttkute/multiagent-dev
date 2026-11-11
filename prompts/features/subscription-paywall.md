@@ -1,11 +1,11 @@
 # Feature: Subscription paywall / free vs pro gating
 
-**Mode:** squad  
+**Mode:** parallel  
 **When to use:** Restricting features to paying users, showing upgrade prompts
 
 ```yaml
 - id: add-paywall
-  mode: squad
+  mode: parallel
   branch: feat/paywall
   prompt: >
     Read PROJECT-CONTEXT.md.

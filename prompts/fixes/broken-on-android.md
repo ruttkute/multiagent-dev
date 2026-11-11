@@ -1,11 +1,11 @@
 # Fix: Works in browser, broken on Android WebView
 
-**Mode:** squad  
+**Mode:** parallel  
 **When to use:** A feature looks correct in Chrome/Safari but fails in the Android app
 
 ```yaml
 - id: fix-android-webview
-  mode: squad
+  mode: parallel
   branch: fix/android-webview
   prompt: >
     Read PROJECT-CONTEXT.md.

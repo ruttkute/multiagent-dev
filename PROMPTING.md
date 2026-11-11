@@ -116,14 +116,14 @@ Test with: [how to measure improvement]
 
 ## Mode selection guide
 
-### Use `mode: squad` (Claude Squad — interactive parallel) when:
+### Use `mode: parallel` (`forge run` — interactive, in parallel) when:
 - The task is medium complexity (< 1 day of work)
 - You want to watch and potentially redirect the agent
 - The task has UI/visual output you want to verify as it's built
 - You're not fully sure what done looks like and want to steer
 - Multiple tasks can run simultaneously without depending on each other
 
-### Use `mode: auto` (OpenHands — autonomous) when:
+### Use `mode: auto` (`forge auto` — unattended) when:
 - The task has a crystal-clear definition of done (a test to pass, a spec to implement)
 - You don't need to watch it — you just want to review the PR
 - The task is well-scoped with no ambiguity about what to touch
@@ -181,9 +181,9 @@ Point every agent prompt to it: `"Follow the API contract in contracts.md at the
 
 ---
 
-## Autonomous mode (OpenHands): extra guidance
+## Autonomous mode (`forge auto`): extra guidance
 
-OpenHands works without you watching. These rules prevent common failures:
+`forge auto` works without you watching. These rules prevent common failures:
 
 **Always include a verification step.** Tell it how to know it's done.
 ```
@@ -218,7 +218,7 @@ Before adding a task to forge.yml, check:
 - [ ] Done defined concretely (test passes / visual outcome / specific return value)
 - [ ] Scope constrained (what not to touch)
 - [ ] Pattern reference given (existing code to follow)
-- [ ] Mode chosen correctly (squad = interactive, auto = fire-and-forget)
+- [ ] Mode chosen correctly (parallel = interactive, auto = fire-and-forget)
 - [ ] No ambiguous decision left for the agent to make
 
 ---
@@ -283,5 +283,3 @@ Before adding a task to forge.yml, check:
 - [`PROJECT-CONTEXT.template.md`](PROJECT-CONTEXT.template.md) — per-project reusability layer
 - [`forge.example.yml`](forge.example.yml) — full config example with annotated prompts
 - [`templates/`](templates/) — stack-specific starting tasks with pre-written prompts
-- [Claude Squad](claude-squad/) — bundled parallel agent source ([upstream](https://github.com/smtg-ai/claude-squad))
-- [OpenHands Agent Canvas](openhands/) — bundled autonomous agent source ([upstream](https://github.com/OpenHands/OpenHands))

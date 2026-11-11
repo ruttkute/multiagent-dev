@@ -1,11 +1,11 @@
 # Fix: Mobile layout overflow / broken grid
 
-**Mode:** squad  
+**Mode:** parallel  
 **When to use:** Page scrolls horizontally on mobile, grid breaks wrong, elements overlap
 
 ```yaml
 - id: fix-mobile-layout
-  mode: squad
+  mode: parallel
   branch: fix/mobile-layout
   prompt: >
     Fix the mobile layout in [FILE e.g. index.html or styles.css] at widths below 768px.
