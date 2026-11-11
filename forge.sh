@@ -5,7 +5,12 @@
 
 set -e
 
-FORGE_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF="$0"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
+done
+FORGE_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 CONFIG_FILE="${FORGE_CONFIG:-forge.yml}"
 
 # ── Colors ──────────────────────────────────────────────────────────────────
@@ -24,9 +29,9 @@ usage() {
     forge <command> [args]
 
   COMMANDS
-    run  <id> [id…]    Run tasks in parallel via Claude Squad
-    auto <id>          Run a task autonomously via OpenHands
-    status             Show running agents + open agent PRs
+    run  <id> [id…]    Copy task prompts, open Claude Squad (press N, paste)
+    auto <id>          Copy task prompt, start OpenHands Agent Canvas
+    status             Show agent worktrees + open agent PRs
     init [template]    Scaffold a forge.yml for this project
     install            Install all dependencies
 
@@ -60,20 +65,35 @@ except FileNotFoundError:
     print(f"ERROR: {config_file} not found — run: forge init", file=sys.stderr)
     sys.exit(1)
 
-tasks, cur, in_tasks = [], None, False
-for line in lines:
-    s = line.strip()
+indent = lambda l: len(l) - len(l.lstrip(' '))
+tasks, cur, in_tasks, i = [], None, False, 0
+while i < len(lines):
+    line = lines[i]; s = line.strip(); i += 1
     if s == 'tasks:':
         in_tasks = True; continue
-    if not in_tasks:
+    if not in_tasks or not s or s.startswith('#'):
         continue
     if s.startswith('- id:'):
         if cur: tasks.append(cur)
         cur = {'id': s[5:].strip().strip('"\''), 'mode': 'squad', 'branch': ''}
-    elif cur:
-        for key in ('prompt', 'mode', 'branch', 'issue'):
-            if s.startswith(f'{key}:'):
-                cur[key] = s[len(key)+1:].strip().strip('"\'')
+        continue
+    if not cur:
+        continue
+    for key in ('prompt', 'mode', 'branch', 'issue'):
+        if not s.startswith(f'{key}:'):
+            continue
+        val = s[len(key)+1:].strip()
+        if val[:1] in ('>', '|'):
+            # YAML block scalar: gather the more-indented lines, flatten to one line
+            base, parts = indent(line), []
+            while i < len(lines) and (not lines[i].strip() or indent(lines[i]) > base):
+                if lines[i].strip(): parts.append(lines[i].strip())
+                i += 1
+            val = ' '.join(parts)
+        elif key != 'prompt':
+            val = re.split(r'\s+#', val)[0]
+        cur[key] = val.strip('"\'')
+        break
 
 if cur: tasks.append(cur)
 
@@ -89,81 +109,98 @@ PY
 
 # ── Commands ─────────────────────────────────────────────────────────────────
 
+find_cs() {
+  command -v cs 2>/dev/null || command -v claude-squad 2>/dev/null ||
+    { [ -x "$FORGE_DIR/bin/cs" ] && echo "$FORGE_DIR/bin/cs"; } || true
+}
+
+copy_to_clipboard() {
+  if command -v pbcopy &>/dev/null; then printf '%s' "$1" | pbcopy
+  elif command -v wl-copy &>/dev/null; then printf '%s' "$1" | wl-copy
+  elif command -v xclip &>/dev/null; then printf '%s' "$1" | xclip -selection clipboard
+  else return 1
+  fi
+}
+
+task_prompt() { get_task "$1" | grep '^prompt=' | cut -d= -f2-; }
+
+# Claude Squad is a TUI with no non-interactive "new session" command:
+# sessions are created inside it with N (new session with prompt).
 cmd_run() {
   [ $# -eq 0 ] && { err "Usage: forge run <task-id> [task-id…]"; exit 1; }
 
-  CS=$(command -v cs 2>/dev/null || command -v claude-squad 2>/dev/null || true)
+  CS=$(find_cs)
   if [ -z "$CS" ]; then
     err "Claude Squad not found — run: forge install"
     exit 1
   fi
 
+  local prompts_dir=".forge/prompts"
+  mkdir -p "$prompts_dir"
+
   echo ""
   info "Preparing ${#@} parallel agent(s)…"
   echo ""
 
-  # Print task summary
+  local n=0
   for id in "$@"; do
-    data=$(get_task "$id")
-    prompt=$(echo "$data" | grep '^prompt=' | cut -d= -f2-)
-    branch=$(echo "$data" | grep '^branch=' | cut -d= -f2-)
-    [ -z "$branch" ] && branch="agent/$id"
-    printf "  ${CYAN}%-20s${NC}  branch: %-30s\n  prompt: %s\n\n" "$id" "$branch" "$prompt"
+    prompt=$(task_prompt "$id")
+    [ -z "$prompt" ] && { err "No task with id '$id' in $CONFIG_FILE"; exit 1; }
+    n=$((n + 1))
+    printf '%s\n' "$prompt" > "$prompts_dir/$id.txt"
+    printf "  ${CYAN}%d. %s${NC}\n  %s\n\n" "$n" "$id" "$prompt"
   done
 
-  info "Starting Claude Squad — each task runs in its own worktree…"
+  if [ $# -eq 1 ] && copy_to_clipboard "$prompt"; then
+    ok "Prompt copied to clipboard"
+  fi
+  info "Prompts saved in $prompts_dir/ (one file per task)"
   echo ""
-
-  # Launch Claude Squad — open one session per task
-  for id in "$@"; do
-    data=$(get_task "$id")
-    prompt=$(echo "$data" | grep '^prompt=' | cut -d= -f2-)
-    branch=$(echo "$data" | grep '^branch=' | cut -d= -f2-)
-    [ -z "$branch" ] && branch="agent/$id"
-
-    # Claude Squad: cs new --name <id> --branch <branch> --prompt "<prompt>"
-    "$CS" new --name "$id" --branch "$branch" --prompt "$prompt" &
-    sleep 0.5
-  done
-
-  wait
+  echo "  In Claude Squad, for each task above:"
+  echo "    N      new session with a prompt — paste the task's prompt, Enter"
+  echo "    ↵ / o  attach to a session · ctrl-q detach · s commit & push · D kill"
+  echo "  Each session gets its own git worktree and branch."
   echo ""
-  ok "All agents launched. Use 'forge status' to monitor."
+  read -r -p "  Press Enter to open Claude Squad… " _
+  exec "$CS"
 }
 
 cmd_auto() {
   local id="$1"
   [ -z "$id" ] && { err "Usage: forge auto <task-id>"; exit 1; }
 
-  if ! command -v openhands &>/dev/null; then
-    err "OpenHands not found — run: forge install"
+  prompt=$(task_prompt "$id")
+  [ -z "$prompt" ] && { err "No task with id '$id' in $CONFIG_FILE"; exit 1; }
+
+  echo ""
+  info "Autonomous task: $id"
+  echo "  $prompt"
+  echo ""
+  if copy_to_clipboard "$prompt"; then
+    ok "Prompt copied — paste it into a new conversation in Agent Canvas"
+  else
+    info "Paste the prompt above into a new conversation in Agent Canvas"
+  fi
+  echo ""
+
+  if command -v agent-canvas &>/dev/null; then
+    exec agent-canvas
+  elif [ -d "$FORGE_DIR/openhands/node_modules" ]; then
+    info "Starting Agent Canvas from the bundled source (openhands/)…"
+    cd "$FORGE_DIR/openhands" && exec npm run dev
+  else
+    err "OpenHands Agent Canvas not installed — run: forge install"
     exit 1
   fi
-
-  data=$(get_task "$id")
-  prompt=$(echo "$data" | grep '^prompt=' | cut -d= -f2-)
-  branch=$(echo "$data" | grep '^branch=' | cut -d= -f2-)
-  [ -z "$branch" ] && branch="agent/$id"
-
-  echo ""
-  info "Starting autonomous agent: $id"
-  echo "  Prompt : $prompt"
-  echo "  Branch : $branch"
-  echo ""
-  warn "Agent will work autonomously. Check GitHub for the PR when done."
-  echo ""
-
-  openhands --task "$prompt" --git-branch "$branch"
 }
 
 cmd_status() {
   echo ""
-  info "Claude Squad sessions"
-  CS=$(command -v cs 2>/dev/null || command -v claude-squad 2>/dev/null || true)
-  if [ -n "$CS" ]; then
-    "$CS" list 2>/dev/null || echo "  (none running)"
+  info "Agent worktrees (Claude Squad sessions)"
+  if git rev-parse --git-dir &>/dev/null; then
+    git worktree list
   else
-    warn "Claude Squad not installed"
+    warn "Not inside a git repository"
   fi
 
   echo ""
@@ -232,34 +269,33 @@ cmd_install() {
   info "Installing multiagent-dev dependencies"
   echo ""
 
-  # Claude Squad
-  if command -v cs &>/dev/null || command -v claude-squad &>/dev/null; then
+  # Claude Squad — built from the bundled source in claude-squad/
+  if [ -n "$(find_cs)" ]; then
     ok "Claude Squad already installed"
+  elif command -v go &>/dev/null; then
+    info "Building Claude Squad from claude-squad/…"
+    mkdir -p "$FORGE_DIR/bin"
+    (cd "$FORGE_DIR/claude-squad" && go build -o "$FORGE_DIR/bin/cs" .) && ok "Claude Squad built → $FORGE_DIR/bin/cs"
+    [ -w /usr/local/bin ] && ln -sf "$FORGE_DIR/bin/cs" /usr/local/bin/cs && ok "cs linked → /usr/local/bin/cs"
   else
-    info "Installing Claude Squad…"
-    if command -v brew &>/dev/null; then
-      brew install smtg-ai/tap/claude-squad && ok "Claude Squad installed"
-    else
-      warn "Homebrew not found. Install Go first, then:"
-      echo "  go install github.com/smtg-ai/claude-squad@latest"
-    fi
+    warn "Go 1.23+ is needed to build Claude Squad from claude-squad/"
+    command -v brew &>/dev/null && echo "  Install Go: brew install go   then re-run: forge install"
   fi
 
   echo ""
 
-  # OpenHands
-  if command -v openhands &>/dev/null; then
-    ok "OpenHands already installed"
+  # OpenHands Agent Canvas — installed from the bundled source in openhands/
+  local node_major
+  node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  if command -v agent-canvas &>/dev/null || [ -d "$FORGE_DIR/openhands/node_modules" ]; then
+    ok "OpenHands Agent Canvas already installed"
+  elif [ "$node_major" -ge 24 ] && command -v uv &>/dev/null; then
+    info "Installing OpenHands Agent Canvas from openhands/…"
+    (cd "$FORGE_DIR/openhands" && npm install) && ok "Agent Canvas installed (start it with: forge auto <id>)"
   else
-    info "OpenHands (autonomous agent):"
-    if command -v pip3 &>/dev/null; then
-      echo "  Run: pip3 install openhands-ai"
-      echo "  Docs: https://github.com/All-Hands-AI/OpenHands"
-      warn "OpenHands requires Docker for sandboxed execution"
-    else
-      warn "Python 3.12+ required. Install from:"
-      echo "  https://github.com/All-Hands-AI/OpenHands"
-    fi
+    warn "OpenHands Agent Canvas needs Node.js 24+ and uv"
+    echo "  Node: https://nodejs.org   uv: https://docs.astral.sh/uv/"
+    echo "  Then re-run: forge install"
   fi
 
   echo ""

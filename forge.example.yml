@@ -39,7 +39,7 @@ tasks:
 
   # ── Autonomous tasks (OpenHands) ───────────────────────────────────────────
   # Fire and forget: forge auto add-auth
-  # OpenHands will work independently and open a PR when done.
+  # Agent Canvas (OpenHands) works on it independently; you review the result.
 
   - id: add-auth
     prompt: >

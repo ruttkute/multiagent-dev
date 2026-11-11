@@ -283,5 +283,5 @@ Before adding a task to forge.yml, check:
 - [`PROJECT-CONTEXT.template.md`](PROJECT-CONTEXT.template.md) — per-project reusability layer
 - [`forge.example.yml`](forge.example.yml) — full config example with annotated prompts
 - [`templates/`](templates/) — stack-specific starting tasks with pre-written prompts
-- [Claude Squad docs](https://github.com/smtg-ai/claude-squad) — parallel agent mechanics
-- [OpenHands docs](https://github.com/All-Hands-AI/OpenHands) — autonomous agent setup
+- [Claude Squad](claude-squad/) — bundled parallel agent source ([upstream](https://github.com/smtg-ai/claude-squad))
+- [OpenHands Agent Canvas](openhands/) — bundled autonomous agent source ([upstream](https://github.com/OpenHands/OpenHands))
