@@ -46,6 +46,7 @@ usage() {
 
   SETTINGS (environment variables)
     FORGE_AGENT             agent command (default: claude)
+    FORGE_MODEL             default model for all tasks; overridden by forge.yml model: field
     FORGE_AUTO_PERMISSION   permission mode for forge auto (default: acceptEdits)
     FORGE_AUTO_BUDGET       max USD per autonomous task (optional)
     FORGE_BASE              branch/commit new task branches start from (default: HEAD)
@@ -60,7 +61,27 @@ usage() {
 EOF
 }
 
-# ── YAML task parser ─────────────────────────────────────────────────────────
+# ── YAML helpers ────────────────────────────────────────────────────────────
+# Reads a top-level scalar field from forge.yml: get_project_field model
+get_project_field() {
+  python3 - "$CONFIG_FILE" "$1" <<'PY'
+import sys, re
+config_file, key = sys.argv[1], sys.argv[2]
+try:
+    lines = open(config_file).readlines()
+except FileNotFoundError:
+    sys.exit(0)
+for line in lines:
+    s = line.strip()
+    if s.startswith(f'{key}:') and not line.startswith(' ') and not line.startswith('\t'):
+        val = s[len(key)+1:].strip().strip('"\'')
+        val = re.split(r'\s+#', val)[0].strip()
+        if val:
+            print(val)
+        break
+PY
+}
+
 # Prints KEY=VALUE lines for one task; multi-line prompts are flattened to one line
 get_task() {
   python3 - "$CONFIG_FILE" "$1" <<'PY'
@@ -88,7 +109,7 @@ while i < len(lines):
         continue
     if not cur:
         continue
-    for key in ('prompt', 'mode', 'branch', 'issue'):
+    for key in ('prompt', 'mode', 'branch', 'issue', 'model'):
         if not s.startswith(f'{key}:'):
             continue
         val = s[len(key)+1:].strip()
@@ -160,6 +181,10 @@ load_task() {
   fi
   BRANCH="$(task_field "$id" branch)"
   [ -z "$BRANCH" ] && BRANCH="forge/$id"
+  # Per-task model > project-level model > FORGE_MODEL env var
+  MODEL="$(task_field "$id" model)"
+  [ -z "$MODEL" ] && MODEL="$(get_project_field model)"
+  [ -z "$MODEL" ] && MODEL="${FORGE_MODEL:-}"
   local current; current="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
   if [ "$BRANCH" = "$current" ]; then
     err "Task '$id' uses branch '$BRANCH', which is checked out in your main folder — give it its own branch"; exit 1
@@ -207,8 +232,10 @@ cmd_run() {
     fi
     local wt; wt="$(make_worktree "$id" "$BRANCH")"
     # The agent starts with the task prompt; when it exits, a shell stays open in the worktree
-    local launch=(bash -c 'cd "$1" && "$2" "$(cat "$3")"; echo; echo "[forge] agent exited — you are in $1"; exec "${SHELL:-bash}"'
-                  forge "$wt" "$AGENT" "$FDIR/prompts/$id.txt")
+    local launch=(bash -c 'cd "$1"
+[ -n "$4" ] && "$2" --model "$4" "$(cat "$3")" || "$2" "$(cat "$3")"
+echo; echo "[forge] agent exited — you are in $1"; exec "${SHELL:-bash}"'
+                  forge "$wt" "$AGENT" "$FDIR/prompts/$id.txt" "$MODEL")
     if tmux has-session -t "=$SESSION" 2>/dev/null; then
       tmux new-window -d -t "=$SESSION:" -n "$id" -c "$wt" "${launch[@]}"
     else
@@ -243,7 +270,7 @@ cmd_auto() {
     fi
     local wt; wt="$(make_worktree "$id" "$BRANCH")"
     rm -f "$FDIR/logs/$id.status"
-    nohup "$FORGE_SH" _auto-run "$id" "$wt" "$BRANCH" "$FDIR" "$base" > "$FDIR/logs/$id.log" 2>&1 &
+    nohup "$FORGE_SH" _auto-run "$id" "$wt" "$BRANCH" "$FDIR" "$base" "$MODEL" > "$FDIR/logs/$id.log" 2>&1 &
     echo $! > "$FDIR/logs/$id.pid"
     ok "$id running in the background → branch $BRANCH"
   done
@@ -254,7 +281,7 @@ cmd_auto() {
 
 # Internal: the background job behind forge auto
 cmd_auto_run() {
-  local id="$1" wt="$2" branch="$3" fdir="$4" base="$5"
+  local id="$1" wt="$2" branch="$3" fdir="$4" base="$5" model="${6:-}"
   local status="$fdir/logs/$id.status"
   set +e
   cd "$wt" || { echo "failed: worktree missing" > "$status"; exit 1; }
@@ -262,6 +289,7 @@ cmd_auto_run() {
   echo "[forge] $(date '+%Y-%m-%d %H:%M:%S') start $id on $branch"
   local args=(-p "$(cat "$fdir/prompts/$id.txt")" --permission-mode "$AUTO_PERMISSION")
   [ -n "$FORGE_AUTO_BUDGET" ] && args+=(--max-budget-usd "$FORGE_AUTO_BUDGET")
+  [ -n "$model" ] && args+=(--model "$model")
   "$AGENT" "${args[@]}"
   local rc=$?
   echo ""

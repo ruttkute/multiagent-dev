@@ -65,10 +65,29 @@ forge auto task-c              # unattended, opens a PR
 
 ---
 
+## Desktop app mode
+
+If you use the **Claude Code desktop app** (the Code tab, not a terminal), `forge auto` works without tmux — tasks run as background processes you follow with `forge logs` and `forge status`. You don't need to open a separate terminal.
+
+**Run a task from the desktop app:**
+
+1. Open a terminal tab in your Code session (the `>_` button, or use the built-in Bash tool).
+2. `cd` to your project and run `forge auto <task-id>`.
+3. The task runs in the background. Check progress with `forge logs <task-id>`.
+4. When it finishes, `forge status` shows the branch and PR link.
+5. Review the branch in a new Code session, then merge.
+
+> `forge run` (interactive mode) still needs tmux — it opens one window per task. If you prefer to steer agents without tmux, describe the task in a new Code session directly instead.
+
+**Pick the model** (see `model:` in forge.yml below) so each project uses the right Claude model without an env var.
+
+---
+
 ## forge.yml format
 
 ```yaml
 project: my-app
+model: claude-sonnet-4-6   # optional — sets the Claude model for all tasks in this project
 
 tasks:
   - id: fix-login-bug
@@ -94,9 +113,11 @@ tasks:
     branch: feat/auth-api
 ```
 
+- **`model`** (project-level): optional Claude model for all tasks — e.g. `claude-sonnet-4-6`. Overrides `FORGE_MODEL`; a per-task `model:` overrides the project one.
 - **`id`**: letters, digits, `.`, `_` and `-`. It is also the worktree and tmux window name.
 - **`branch`**: optional; defaults to `forge/<id>`. An existing branch is reused; otherwise it's created from your current commit (or `FORGE_BASE`). It can't be the branch checked out in your main folder.
 - **`mode`**: a reminder of how the task is meant to run. You choose with `forge run` or `forge auto`.
+- **`model`** (per-task): optional — overrides the project-level `model:` for this task only.
 
 ---
 
@@ -129,6 +150,7 @@ When the agent exits, the window drops to a shell inside that task's worktree, s
 | Variable | Default | Purpose |
 |---|---|---|
 | `FORGE_AGENT` | `claude` | Agent command. `forge run` calls `<agent> "<prompt>"`; `forge auto` calls `<agent> -p "<prompt>" --permission-mode <mode>` |
+| `FORGE_MODEL` | (none) | Default Claude model for all tasks. Overridden by `model:` in forge.yml |
 | `FORGE_AUTO_PERMISSION` | `acceptEdits` | Permission mode for `forge auto`. `acceptEdits` lets the agent edit files but not run arbitrary commands. Only use `bypassPermissions` in a sandbox |
 | `FORGE_AUTO_BUDGET` | (none) | Maximum USD an autonomous task may spend |
 | `FORGE_BASE` | `HEAD` | Branch or commit that new task branches start from |
